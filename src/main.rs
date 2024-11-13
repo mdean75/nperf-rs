@@ -76,6 +76,18 @@ mod udp;
 
 #[doc(hidden)]
 fn main() -> io::Result<()> {
+    let mut payload: Vec<u8> = Vec::new();
+
+    let data = "abcdefghijklmnopqrstuvwxyz".to_owned().into_bytes();
+    let len: u16 = data.len() as u16;
+
+    payload.append(&mut len.to_be_bytes().to_vec());
+    payload.append(&mut data.clone());
+
+    let hex_string = hex::encode(&payload);
+    println!("{}", hex_string);
+
+
     let param = params::parse_args().unwrap();
 
     match param.mode {

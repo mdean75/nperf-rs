@@ -58,9 +58,21 @@ pub fn send_state(stream: &TcpStream, state: TestState) {
     write_socket(&stream, byte).unwrap();
 }
 
+pub fn build_payload() -> Vec<u8> {
+    let mut payload: Vec<u8> = Vec::new();
+
+    let data = "abcdefghijklmnopqrstuvwxyz234567".to_owned().into_bytes();
+    let len: u16 = data.len() as u16;
+
+    payload.append(&mut len.to_be_bytes().to_vec());
+    payload.append(&mut data.clone());
+
+    payload
+}
+
 pub fn make_cookie() -> String {
     let rndchars: String = String::from("abcdefghijklmnopqrstuvwxyz234567");
-    return rndchars;
+    rndchars
 }
 /*
 void make_cookie(const char *cookie) {

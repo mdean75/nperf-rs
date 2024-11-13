@@ -7,7 +7,7 @@ use std::net::{IpAddr, SocketAddr};
 use std::str::FromStr;
 use std::time::Duration;
 use std::{io, thread};
-
+use hex::decode;
 use crate::net::*;
 use crate::test::*;
 
@@ -18,6 +18,7 @@ pub struct ClientImpl {
     server_addr: SocketAddr,
     ctrl: TcpStream,
     running: bool,
+    payload: Vec<u8>,
 }
 
 impl ClientImpl {
@@ -40,10 +41,18 @@ impl ClientImpl {
         set_nonblocking(&ctrl, true);
         println!("Control Connection MSS: {}", crate::tcp::mss(&ctrl));
 
+        let payload = match params.payload.clone() {
+            None => {make_cookie().as_bytes().to_vec()}
+            Some(hex) => {
+                decode(&hex).unwrap_or_else(|e| {make_cookie().as_bytes().to_vec()})
+            }
+        };
+
         Ok(ClientImpl {
             server_addr: addr,
             ctrl,
             running: false,
+            payload,
         })
     }
     // run, like the server, is just a loop.
@@ -66,7 +75,6 @@ impl ClientImpl {
 
         // todo
         test.mode = StreamMode::SENDER;
-
         // setup MSS for UDP
         let ctrl_mss = crate::tcp::mss(&self.ctrl) as usize;
         match test.conn() {
@@ -95,7 +103,8 @@ impl ClientImpl {
                     CONTROL => match test.state() {
                         TestState::Start => {
                             if event.is_writable() {
-                                write_socket(&self.ctrl, make_cookie().as_bytes())?;
+                                // write_socket(&self.ctrl, make_cookie().as_bytes())?;
+                                write_socket(&self.ctrl, self.payload.as_slice())?;
                                 test.transition(TestState::ParamExchange);
                             }
                         }
@@ -155,7 +164,8 @@ impl ClientImpl {
                                                 q.conn.as_mut().unwrap().open_uni().await.unwrap();
                                             println!("Quic Open UNI: {:?}", stream.id());
                                             q.send_streams.push(stream);
-                                            match quic::write_cookie(q, make_cookie().as_bytes())
+                                            // match quic::write_cookie(q, make_cookie().as_bytes())
+                                            match quic::write_cookie(q, self.payload.as_mut_slice())
                                                 .await
                                             {
                                                 Ok(_) => {}
@@ -169,8 +179,10 @@ impl ClientImpl {
                                 }
                                 _ => {
                                     for pstream in &mut test.streams {
-                                        match pstream.write(make_cookie().as_bytes()) {
-                                            Ok(_) => {}
+                                        // match pstream.write(make_cookie().as_bytes()) {
+                                        // let payload = build_payload();
+                                        match pstream.write(self.payload.as_slice()) {
+                                            Ok(n) => {println!("wrote {} bytes: {:?}", n, self.payload.as_slice());}
                                             Err(_e) => {
                                                 println!("Failed to send cookie {:?}", _e);
                                                 continue;
