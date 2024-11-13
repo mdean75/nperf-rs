@@ -111,7 +111,9 @@ impl ServerImpl {
                             if event.is_readable() {
                                 let ctrl_ref = self.ctrl.as_mut().unwrap();
                                 let buf = drain_message(ctrl_ref)?;
+                                println!("call set_settings with buf: {}, {:?}", buf.to_string(), buf.as_bytes());
                                 test.set_settings(buf);
+
                                 if test.verbose() {
                                     println!("\tCookie: {}", test.cookie);
                                     println!("\tTCP MSS: {}", test.mss());

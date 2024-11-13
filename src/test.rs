@@ -611,6 +611,7 @@ impl Test {
     }
     */
     pub fn set_settings(&mut self, settings: String) {
+        println!("Settings: {}", settings);
         self.settings = serde_json::from_str(&settings).unwrap();
     }
     pub fn settings(&self) -> String {
