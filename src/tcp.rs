@@ -26,6 +26,7 @@ impl Stream for TcpStream {
         // let mut buf = [0; 131072];
         std::io::Read::read(self, buf)
     }
+
     #[inline(always)]
     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
         std::io::Write::write(self, buf)
@@ -136,6 +137,7 @@ pub fn connect(addr: std::net::SocketAddr) -> io::Result<TcpStream> {
             Token(1),
             Interest::READABLE | Interest::WRITABLE,
         )?;
+        stream.set_nodelay(true)?;
 
         poll.poll(&mut events, Some(Duration::from_secs(1)))?;
         for event in events.iter() {

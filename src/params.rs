@@ -79,6 +79,7 @@ pub struct PerfParams {
     pub skip_tls: bool,
     pub cert: Option<String>,
     pub key: Option<String>,
+    pub add_header: bool,
 }
 
 pub fn parse_args() -> Result<PerfParams, io::ErrorKind> {
@@ -106,6 +107,7 @@ pub fn parse_args() -> Result<PerfParams, io::ErrorKind> {
     let mut key: Option<String> = None;
     let mut verbose = false;
     let mut debug = false;
+    let mut add_header = false;
     {
         let mut args = ArgumentParser::new();
         args.set_description("[s] server only, [c] client only, [sc] both, \n[KMG] option supports a K/M/G suffix for kilo-, mega-, or giga-");
@@ -217,6 +219,12 @@ pub fn parse_args() -> Result<PerfParams, io::ErrorKind> {
             StoreTrue,
             "[sc] Enable debug logging",
         );
+        args.refer(&mut add_header).add_option(
+            &["--add-header"],
+            StoreTrue,
+            "[sc] Enable length header"
+        );
+
         args.parse_args_or_exit();
     }
     if server && client != None {
@@ -255,6 +263,7 @@ pub fn parse_args() -> Result<PerfParams, io::ErrorKind> {
         skip_tls,
         cert,
         key,
+        add_header,
     };
     Ok(params)
 }

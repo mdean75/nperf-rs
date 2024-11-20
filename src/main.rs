@@ -45,7 +45,8 @@
 use futures::executor::block_on;
 use std::io;
 use std::process::exit;
-
+use env_logger::Target;
+use log::LevelFilter;
 use crate::client::ClientImpl;
 use crate::params::PerfMode;
 use crate::server::ServerImpl;
@@ -76,6 +77,11 @@ mod udp;
 
 #[doc(hidden)]
 fn main() -> io::Result<()> {
+    env_logger::builder()
+        .target(Target::Stdout)
+        .filter_level(LevelFilter::Info)
+        .format_timestamp_micros()
+        .init();
     let param = params::parse_args().unwrap();
 
     match param.mode {

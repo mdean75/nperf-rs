@@ -2,6 +2,7 @@ use crate::params::PerfParams;
 use crate::quic::{self, Quic};
 use crate::tls::TlsEndpoint;
 use core::panic;
+use std::io;
 use mio::net::{TcpListener, TcpStream, UdpSocket};
 use mio::{Events, Interest, Poll, Token, Waker};
 use std::net::{IpAddr, SocketAddr};
@@ -23,6 +24,7 @@ pub struct ServerImpl {
     t: Option<TcpListener>,
     u: Option<UdpSocket>,
     q: Option<Quic>,
+    add_header: bool,
 }
 
 impl ServerImpl {
@@ -48,6 +50,7 @@ impl ServerImpl {
             t: Some(listener),
             u: None,
             q: None,
+            add_header: params.add_header,
         })
     }
     // run is basically a loop listening on events, initially on the ctrl connection
@@ -97,20 +100,37 @@ impl ServerImpl {
             }
             // println!("{:?}", events);
             for event in events.iter() {
+                // println!("Event: {:?}", event.token());
                 match event.token() {
                     CONTROL => match test.state() {
                         TestState::Start => {
+                            println!("server start: {:?}", event.token());
                             if event.is_readable() {
+                                println!("server readable");
                                 let ctrl_ref = self.ctrl.as_mut().unwrap();
-                                test.cookie = drain_message(ctrl_ref)?;
+                                if self.add_header {
+                                    test.cookie = drain_message_with_header(ctrl_ref)?
+                                } else {
+                                    test.cookie = drain_message(ctrl_ref)?
+                                }
+                                println!("Server cookie: {}", test.cookie);
+                                // test.cookie = drain_message(ctrl_ref)?;
+                                println!("Server transition to param exchange");
                                 test.transition(TestState::ParamExchange);
-                                send_state(ctrl_ref, TestState::ParamExchange);
+                                send_state(ctrl_ref, TestState::ParamExchange, self.add_header);
                             }
                         }
                         TestState::ParamExchange => {
+                            println!("server param exchange");
                             if event.is_readable() {
                                 let ctrl_ref = self.ctrl.as_mut().unwrap();
-                                let buf = drain_message(ctrl_ref)?;
+                                let mut buf = String::new();
+                                if self.add_header {
+                                    buf = drain_message_with_header(ctrl_ref)?;
+                                } else {
+                                    buf = drain_message(ctrl_ref)?;
+                                }
+                                // let buf = drain_message(ctrl_ref)?;
                                 test.set_settings(buf);
                                 if test.verbose() {
                                     println!("\tCookie: {}", test.cookie);
@@ -163,7 +183,7 @@ impl ServerImpl {
                                     }
                                 }
                                 test.transition(TestState::CreateStreams);
-                                send_state(ctrl_ref, TestState::CreateStreams);
+                                send_state(ctrl_ref, TestState::CreateStreams, self.add_header);
                             }
                         }
                         // CreateStreams handled by each socket type below
@@ -171,12 +191,20 @@ impl ServerImpl {
                         // TestStart is managed by the data connection tokens
                         TestState::TestStart => {}
                         TestState::TestRunning => {
+                            println!("server test running");
                             // this state for this token can be hit if
                             // the client is shutdown unplanned -> Err
                             // and when client sends TestEnd -> Ok
                             if event.is_readable() {
                                 let ctrl_ref = self.ctrl.as_mut().unwrap();
-                                let state = match drain_message(ctrl_ref) {
+                                let raw_state: io::Result<String>;
+                                if self.add_header {
+                                    raw_state = drain_message_with_header(ctrl_ref);
+                                } else {
+                                    raw_state = drain_message(ctrl_ref);
+                                }
+                                // let state = match drain_message(ctrl_ref) {
+                                let state = match raw_state {
                                     Ok(buf) => match buf.len() {
                                         1 => TestState::from_i8(buf.as_bytes()[0] as i8),
                                         _ => {
@@ -208,7 +236,17 @@ impl ServerImpl {
                             if test.debug() {
                                 println!("{} {}", json, json.len());
                             }
-                            self.ctrl.as_mut().unwrap().write(json.as_bytes())?;
+                            let mut payload = json.as_bytes();
+                            let mut tmp_buf = vec![];
+                            if self.add_header {
+                                // let mut tmp_buf = vec![];
+                                tmp_buf.append((payload.len() as u16).to_be_bytes().to_vec().as_mut());
+                                tmp_buf.extend_from_slice(payload);
+
+                                payload = tmp_buf.as_slice();
+                            }
+                            // self.ctrl.as_mut().unwrap().write(json.as_bytes())?;
+                            self.ctrl.as_mut().unwrap().write(payload)?;
                             test.transition(TestState::End);
                         }
                         TestState::End => {
@@ -234,7 +272,7 @@ impl ServerImpl {
                             if test.streams.len() == test.num_streams() as usize {
                                 let ctrl_ref = self.ctrl.as_ref().unwrap();
                                 test.transition(TestState::TestStart);
-                                send_state(ctrl_ref, TestState::TestStart);
+                                send_state(ctrl_ref, TestState::TestStart, self.add_header);
                                 test.header();
                             }
                         }
@@ -251,7 +289,7 @@ impl ServerImpl {
                                 if test.streams.len() == test.num_streams() as usize {
                                     let ctrl_ref = self.ctrl.as_ref().unwrap();
                                     test.transition(TestState::TestStart);
-                                    send_state(ctrl_ref, TestState::TestStart);
+                                    send_state(ctrl_ref, TestState::TestStart, self.add_header);
                                     test.header();
                                 }
                             }
@@ -269,7 +307,7 @@ impl ServerImpl {
                                 if test.streams.len() == test.num_streams() as usize {
                                     let ctrl_ref = self.ctrl.as_ref().unwrap();
                                     test.transition(TestState::TestStart);
-                                    send_state(ctrl_ref, TestState::TestStart);
+                                    send_state(ctrl_ref, TestState::TestStart, self.add_header);
                                     test.header();
                                 }
                                 break;
@@ -287,7 +325,7 @@ impl ServerImpl {
                             if test.streams.len() == test.num_streams() as usize {
                                 let ctrl_ref = self.ctrl.as_ref().unwrap();
                                 test.transition(TestState::TestStart);
-                                send_state(ctrl_ref, TestState::TestStart);
+                                send_state(ctrl_ref, TestState::TestStart, self.add_header);
                                 test.header();
                             }
                         }
@@ -311,6 +349,9 @@ impl ServerImpl {
                                         }
                                         Conn::TCP => {
                                             let t: &mut TcpStream = (&mut pstream.stream).into();
+
+                                            // TODO: do we need to care whether the payload has a header here? yes
+
                                             TcpStream::read(t, &mut buf)
                                         }
                                         Conn::TLS => {
@@ -332,8 +373,15 @@ impl ServerImpl {
                                             pstream.data.blks += 1;
                                             test.data.blks += 1;
                                             pstream.temp.blks += 1;
-                                            pstream.last_recvd_in_interval =
-                                                u64::from_be_bytes(buf[0..8].try_into().unwrap());
+                                            if self.add_header {
+                                                pstream.last_recvd_in_interval =
+                                                    u64::from_be_bytes(buf[2..10].try_into().unwrap());
+                                            } else {
+                                                pstream.last_recvd_in_interval =
+                                                    u64::from_be_bytes(buf[0..8].try_into().unwrap());
+                                            }
+                                            // pstream.last_recvd_in_interval =
+                                            //     u64::from_be_bytes(buf[0..8].try_into().unwrap());
                                         }
                                         Err(_e) => break,
                                     }
@@ -371,7 +419,13 @@ impl ServerImpl {
                                     Conn::TCP => {
                                         let pstream = &mut test.streams[token.0];
                                         let t: &mut TcpStream = (&mut pstream.stream).into();
-                                        let n = drain_message(t)?;
+                                        let mut n = String::new();
+                                        if self.add_header {
+                                            n = drain_message_with_header(t)?
+                                        } else {
+                                            n = drain_message(t)?
+                                        }
+                                        // let n = drain_message(t)?;
                                         if test.debug {
                                             println!("Cookie: {:?}", n);
                                         }
@@ -396,7 +450,7 @@ impl ServerImpl {
                                 test.cookie_count += 1;
                                 if test.num_streams() == test.cookie_count {
                                     test.transition(TestState::TestRunning);
-                                    send_state(self.ctrl.as_ref().unwrap(), TestState::TestRunning);
+                                    send_state(self.ctrl.as_ref().unwrap(), TestState::TestRunning, self.add_header);
                                     test.start();
                                 }
                             }

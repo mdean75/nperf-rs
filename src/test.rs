@@ -391,8 +391,22 @@ impl PerfStream {
         self.temp.blks = 0;
     }
     #[inline]
-    pub fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
-        match self.stream.write(buf) {
+    pub fn write(&mut self, mut buf: &[u8], add_header: bool) -> io::Result<usize> {
+        let mut tmp_buf = vec![]; //buf.to_vec();
+        if add_header {
+            println!("write with header");
+            // let mut tmp_buf = vec![];
+            tmp_buf.append((buf.len() as u16).to_be_bytes().to_vec().as_mut());
+            tmp_buf.extend_from_slice(buf);
+
+            // buf = tmp_buf.as_slice();
+        } else {
+            tmp_buf.extend_from_slice(buf);
+        }
+
+
+        println!("wrote: {:?}", tmp_buf);
+        match self.stream.write(tmp_buf.as_slice()) {
             Ok(n) => {
                 return Ok(n);
             }
@@ -611,6 +625,7 @@ impl Test {
     }
     */
     pub fn set_settings(&mut self, settings: String) {
+        println!("Settings: {}", settings);
         self.settings = serde_json::from_str(&settings).unwrap();
     }
     pub fn settings(&self) -> String {
