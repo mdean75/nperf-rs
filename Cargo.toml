@@ -1,13 +1,13 @@
 [package]
 name = "nperf"
-version = "0.3.0"
-authors = ["Ravi V"]
+version = "0.4.0"
+authors = ["Ravi V", "Mike DeAngelo"]
 edition = "2021"
 description = """
 A network performance measurement tool for TCP/UCP/QUIC/TLS protocols. Similar to iperf3 in usage.
 """
 keywords = ["networking", "performance", "iperf", "quic"]
-repository = "https://github.com/ravi861/nperf-rs"
+repository = "https://github.com/mdean75/nperf-rs"
 readme = "README.md"
 license = "Apache-2.0"
 exclude = [".github", ".gitignore", "*.pcap", "*.log", "tags"]
@@ -28,6 +28,9 @@ futures = { version = "0.3", default-features = false, features = ["executor"] }
 tracing-timing = {  version = "0.6.0", default-features = false }
 tracing = { version = "0.1.2", default-features = false }
 libc = "0.2.139"
+env_logger = "0.11.5"
+log = "0.4.22"
+chrono = "0.4.38"
 
 [profile.release]
 strip = true

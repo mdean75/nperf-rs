@@ -1,3 +1,18 @@
+// Copyright 2024 Mike DeAngelo
+// Based on work by Ravi Vantipalli.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+// http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 use crate::params::PerfParams;
 use crate::quic::{self, Quic};
 use crate::tls::TlsEndpoint;
@@ -7,7 +22,7 @@ use std::net::{IpAddr, SocketAddr};
 use std::str::FromStr;
 use std::time::Duration;
 use std::{io, thread};
-
+use std::thread::sleep;
 use crate::net::*;
 use crate::test::*;
 
@@ -18,6 +33,8 @@ pub struct ClientImpl {
     server_addr: SocketAddr,
     ctrl: TcpStream,
     running: bool,
+    add_header: bool,
+    payload: Vec<u8>,
 }
 
 impl ClientImpl {
@@ -38,12 +55,23 @@ impl ClientImpl {
         set_nodelay(&ctrl);
         set_linger(&ctrl);
         set_nonblocking(&ctrl, true);
+        _set_send_buffer_size(&ctrl, 64768);
         println!("Control Connection MSS: {}", crate::tcp::mss(&ctrl));
+
+        let buf = vec![1u8; params.length as usize];
+        let mut buf_with_header = vec![];
+        if params.add_header {
+            buf_with_header.append((params.length as u16).to_be_bytes().to_vec().as_mut());
+        }
+
+        buf_with_header.extend_from_slice(buf.as_slice());
 
         Ok(ClientImpl {
             server_addr: addr,
             ctrl,
             running: false,
+            add_header: params.add_header,
+            payload: buf_with_header.as_slice().to_vec(),
         })
     }
     // run, like the server, is just a loop.
@@ -89,30 +117,32 @@ impl ClientImpl {
 
         loop {
             poll.poll(&mut events, Some(Duration::from_millis(100)))?;
-            // println!("{:?}", events);
             for event in events.iter() {
                 match event.token() {
                     CONTROL => match test.state() {
                         TestState::Start => {
                             if event.is_writable() {
-                                write_socket(&self.ctrl, make_cookie().as_bytes())?;
+                                write_socket(&self.ctrl, make_cookie().as_bytes(), self.add_header)?;
                                 test.transition(TestState::ParamExchange);
                             }
                         }
                         TestState::ParamExchange => {
                             if event.is_readable() {
+                                // clear and discard anything in the buffer
                                 drain_message(&mut self.ctrl)?;
                             }
                             // Send params
-                            write_socket(&self.ctrl, test.settings().as_bytes())?;
+                            write_socket(&self.ctrl, test.settings().as_bytes(), self.add_header)?;
                             test.transition(TestState::CreateStreams);
                         }
                         TestState::CreateStreams => {
+                            println!("Client create streams");
                             if event.is_readable() {
+                                // clear and discard anything in the buffer
                                 drain_message(&mut self.ctrl)?;
                             }
                             for _ in 0..test.num_streams() {
-                                thread::sleep(Duration::from_millis(10));
+                                sleep(Duration::from_millis(10));
                                 match test.conn() {
                                     Conn::UDP => {
                                         let stream = crate::udp::connect(self.server_addr)?;
@@ -142,6 +172,7 @@ impl ClientImpl {
                         }
                         TestState::TestStart => {
                             if event.is_readable() {
+                                // clear and discard anything in the buffer
                                 drain_message(&mut self.ctrl)?;
                             }
                             match test.conn() {
@@ -169,7 +200,7 @@ impl ClientImpl {
                                 }
                                 _ => {
                                     for pstream in &mut test.streams {
-                                        match pstream.write(make_cookie().as_bytes()) {
+                                        match pstream.write(make_cookie().as_bytes(), self.add_header) {
                                             Ok(_) => {}
                                             Err(_e) => {
                                                 println!("Failed to send cookie {:?}", _e);
@@ -196,7 +227,7 @@ impl ClientImpl {
                                         drain_message(&mut self.ctrl)?;
                                     }
                                     self.running = true;
-                                    test.header();
+                                    test.header(self.add_header);
                                     for pstream in &mut test.streams {
                                         pstream.stream.register(&mut poll, STREAM);
                                     }
@@ -206,13 +237,22 @@ impl ClientImpl {
                         }
                         TestState::ExchangeResults => {
                             if event.is_readable() {
-                                let json = match drain_message(&mut self.ctrl) {
-                                    Ok(buf) => buf,
-                                    Err(_) => continue,
-                                };
+                                let mut json = String::new();
+                                if self.add_header {
+                                    json = match drain_message_with_header(&mut self.ctrl) {
+                                        Ok(buf) => buf,
+                                        Err(_) => continue,
+                                    };
+                                } else {
+                                    json = match drain_message(&mut self.ctrl) {
+                                        Ok(buf) => buf,
+                                        Err(_) => continue,
+                                    };
+                                }
+
                                 test.from_serde(json.trim().to_string());
                                 test.transition(TestState::End);
-                                send_state(&self.ctrl, TestState::End);
+                                send_state(&self.ctrl, TestState::End, self.add_header);
                                 waker.wake()?;
                             }
                         }
@@ -223,10 +263,14 @@ impl ClientImpl {
                         }
                         TestState::TestEnd | TestState::Wait => {
                             if event.is_readable() {
-                                let buf = drain_message(&mut self.ctrl)?;
+                                let mut buf = String::new();
+                                if self.add_header {
+                                    buf = drain_message_with_header(&mut self.ctrl)?;
+                                } else {
+                                    buf = drain_message(&mut self.ctrl)?;
+                                }
                                 let state = TestState::from_i8(buf.as_bytes()[0] as i8);
                                 test.transition(state);
-                                // waker.wake()?;
                             }
                         }
                     },
@@ -270,11 +314,28 @@ impl ClientImpl {
                                             Conn::TCP => {
                                                 let t: &mut TcpStream =
                                                     (&mut pstream.stream).into();
-                                                TcpStream::write(t, &TCP_BUF[..len])
+
+                                                let res: io::Result<usize> = mio::net::TcpStream::write(t, self.payload.as_slice());
+                                                match res {
+                                                    Ok(n) => {
+                                                        if n != self.payload.len() {
+                                                            // not all bytes written likely due to buffer full, pause and try to write remaining bytes
+                                                            sleep(Duration::from_millis(100));
+                                                            mio::net::TcpStream::write(t, &self.payload.as_slice()[n..])?;
+                                                        }
+                                                    }
+                                                    Err(_) => { // if we get an error here it is likely EWOULDBLOCK, just continue
+                                                        continue;
+                                                    }
+                                                }
+
+                                                Ok(self.payload.len())
                                             }
                                             Conn::TLS => {
                                                 let t: &mut TlsEndpoint =
                                                     (&mut pstream.stream).into();
+
+                                                // TODO: switch away from using TCP_BUF
                                                 t.write(&TCP_BUF[..len])
                                             }
                                             Conn::UDP => {
@@ -305,7 +366,6 @@ impl ClientImpl {
                                                 metrics.record(verbose);
                                             }
                                             Err(_e) => {
-                                                //println!("Is there error");
                                                 try_later = true;
                                                 break;
                                             }
@@ -330,6 +390,7 @@ impl ClientImpl {
                                         Conn::TCP => {
                                             for pstream in &test.streams {
                                                 let x: &TcpStream = (&pstream.stream).into();
+                                                println!("shutting down stream");
                                                 x.shutdown(std::net::Shutdown::Both)?;
                                             }
                                         }
@@ -346,7 +407,7 @@ impl ClientImpl {
                                     }
                                     test.end(&mut poll);
                                     test.transition(TestState::ExchangeResults);
-                                    send_state(&self.ctrl, TestState::TestEnd);
+                                    send_state(&self.ctrl, TestState::TestEnd, self.add_header);
                                     // waker.wake()?;
                                 }
                             }

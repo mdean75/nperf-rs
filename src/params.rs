@@ -1,3 +1,18 @@
+// Copyright 2024 Mike DeAngelo
+// Based on work by Ravi Vantipalli.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+// http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 use std::{fmt::Display, io};
 
 extern crate argparse;
@@ -79,6 +94,7 @@ pub struct PerfParams {
     pub skip_tls: bool,
     pub cert: Option<String>,
     pub key: Option<String>,
+    pub add_header: bool,
 }
 
 pub fn parse_args() -> Result<PerfParams, io::ErrorKind> {
@@ -98,7 +114,7 @@ pub fn parse_args() -> Result<PerfParams, io::ErrorKind> {
     let mut time: u64 = 10;
     let mut bytes: String = String::from("abcdef");
     let mut blks: u64 = 0;
-    let mut length: u32 = 0;
+    let mut length: u32 = 131072;
     let sendbuf: u32 = 0;
     let recvbuf: u32 = 0;
     let mut skip_tls: bool = false;
@@ -106,6 +122,7 @@ pub fn parse_args() -> Result<PerfParams, io::ErrorKind> {
     let mut key: Option<String> = None;
     let mut verbose = false;
     let mut debug = false;
+    let mut add_header = false;
     {
         let mut args = ArgumentParser::new();
         args.set_description("[s] server only, [c] client only, [sc] both, \n[KMG] option supports a K/M/G suffix for kilo-, mega-, or giga-");
@@ -217,6 +234,12 @@ pub fn parse_args() -> Result<PerfParams, io::ErrorKind> {
             StoreTrue,
             "[sc] Enable debug logging",
         );
+        args.refer(&mut add_header).add_option(
+            &["--add-header"],
+            StoreTrue,
+            "[sc] Enable length header"
+        );
+
         args.parse_args_or_exit();
     }
     if server && client != None {
@@ -255,6 +278,7 @@ pub fn parse_args() -> Result<PerfParams, io::ErrorKind> {
         skip_tls,
         cert,
         key,
+        add_header,
     };
     Ok(params)
 }

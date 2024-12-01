@@ -6,6 +6,21 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
+// Copyright 2024 Mike DeAngelo
+// Based on work by Ravi Vantipalli.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+// http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 //! # nperf
 //!
 //! `nperf` is a network performance measurement tool for TCP/UDP/QUIC protocols. Similar to iperf3 in usage.
@@ -45,7 +60,8 @@
 use futures::executor::block_on;
 use std::io;
 use std::process::exit;
-
+use env_logger::Target;
+use log::LevelFilter;
 use crate::client::ClientImpl;
 use crate::params::PerfMode;
 use crate::server::ServerImpl;
@@ -76,6 +92,11 @@ mod udp;
 
 #[doc(hidden)]
 fn main() -> io::Result<()> {
+    env_logger::builder()
+        .target(Target::Stdout)
+        .filter_level(LevelFilter::Info)
+        .format_timestamp_micros()
+        .init();
     let param = params::parse_args().unwrap();
 
     match param.mode {
