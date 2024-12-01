@@ -1,7 +1,24 @@
+// Copyright 2024 Mike DeAngelo
+// Based on work by Ravi Vantipalli.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+// http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 use mio::net::{TcpListener, TcpStream, UdpSocket};
 use socket2::{Domain, Protocol, SockRef, Socket, Type};
 
 use crate::{test::Stream, test::TestState};
+use chrono::Local;
+
 use std::io::Error;
 use std::io::{self, Write};
 use std::net::SocketAddr;
@@ -11,29 +28,25 @@ use std::os::unix::io::AsRawFd;
 use std::os::windows::io::AsRawSocket as AsRawFd;
 use std::time::Duration;
 
-pub fn gettime() -> String {
-    // return Local::now().format("%Y-%m-%d %H:%M:%S.%6f").to_string();
-    String::new()
+pub fn get_time() -> String {
+    Local::now().format("%Y-%m-%d %H:%M:%S.%6f").to_string()
 }
 
-pub fn write_socket(mut stream: &TcpStream, mut buf: &[u8], add_header: bool) -> io::Result<usize> {
-    println!("write_socket: {:?}", buf);
+/// Handles writing the bytes to the tcp stream.
+/// It adds a payload length header when add_header is set
+/// to true.
+pub fn write_socket(mut stream: &TcpStream, buf: &[u8], add_header: bool) -> io::Result<usize> {
     let mut temp_buf = vec![];
     if add_header {
-        // let mut temp_buf = vec![];
         temp_buf.append((buf.len() as u16).to_be_bytes().to_vec().as_mut());
-        temp_buf.extend_from_slice(buf);
-
-        // buf = temp_buf.as_slice();
     }
-    println!("write_socket, what is tmp_buf: {:?}", temp_buf.as_slice());
-    match stream.write(temp_buf.as_slice()) {
-        Ok(n) => {
-            println!("write_socket: sent {} bytes", n);
-            return Ok(n);
+    temp_buf.extend_from_slice(buf);
+
+    match stream.write_all(temp_buf.as_slice()) {
+        Ok(_) => {
+            return Ok(temp_buf.len());
         }
         Err(ref e) if e.kind() == io::ErrorKind::WouldBlock => {
-            println!("write_socket: would block");
             return Ok(0);
         }
         Err(e) => {
@@ -44,7 +57,6 @@ pub fn write_socket(mut stream: &TcpStream, mut buf: &[u8], add_header: bool) ->
 }
 
 pub fn drain_message<T: Stream + 'static>(stream: &mut T) -> io::Result<String> {
-    println!("Draining message");
     let mut buf = String::new();
     loop {
         let mut data = [0; 8192];
@@ -53,7 +65,6 @@ pub fn drain_message<T: Stream + 'static>(stream: &mut T) -> io::Result<String> 
                 return Err(Error::last_os_error());
             }
             Ok(n) => {
-                println!("Read {} bytes: {:?}", n, data[0..n].to_vec());
                 buf += String::from_utf8(data[0..n].to_vec()).unwrap().as_str();
             }
             Err(ref e) => {
@@ -68,7 +79,6 @@ pub fn drain_message<T: Stream + 'static>(stream: &mut T) -> io::Result<String> 
 }
 
 pub fn drain_message_with_header<T: Stream + 'static>(stream: &mut T) -> io::Result<String> {
-    println!("Draining message with header");
     let mut buf = String::new();
     loop {
         let mut header_bytes = [0;2];
@@ -76,7 +86,7 @@ pub fn drain_message_with_header<T: Stream + 'static>(stream: &mut T) -> io::Res
             Ok(0) => {
                 return Err(Error::last_os_error());
             }
-            Ok(n) => {
+            Ok(_) => {
                 // we have the header, now determine how many bytes we need to read
                 let bytes_to_read = u16::from_be_bytes(header_bytes);
                 // let mut data = Vec::with_capacity(bytes_to_read as usize);
@@ -106,27 +116,10 @@ pub fn drain_message_with_header<T: Stream + 'static>(stream: &mut T) -> io::Res
                 }
             }
         }
-        // let mut data = [0; 8192];
-        // match stream.read(&mut data) {
-        //     Ok(0) => {
-        //         return Err(Error::last_os_error());
-        //     }
-        //     Ok(n) => {
-        //         buf += String::from_utf8(data[0..n].to_vec()).unwrap().as_str();
-        //     }
-        //     Err(ref e) => {
-        //         match e.kind() {
-        //             io::ErrorKind::Interrupted => continue,
-        //             io::ErrorKind::WouldBlock => return Ok(buf),
-        //             _ => return Err(Error::last_os_error()),
-        //         };
-        //     }
-        // }
     }
 }
 
 pub fn send_state(stream: &TcpStream, state: TestState, add_header: bool) {
-    println!("Sending state {:?}", state);
     let byte: &mut [u8] = &mut [state as u8];
     write_socket(&stream, byte, add_header).unwrap();
 }
@@ -172,7 +165,6 @@ pub fn set_nodelay<T: Stream + AsRawFd + 'static>(stream: &T) {
 }
 pub fn set_linger<T: Stream + AsRawFd + 'static>(stream: &T) {
     let sck = SockRef::from(stream);
-   //  match sck.set_linger(Some(Duration::from_secs(1))) {
     match sck.set_linger(Some(Duration::from_secs(1))) {
         Ok(_) => return,
         Err(e) => {

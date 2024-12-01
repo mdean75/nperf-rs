@@ -1,3 +1,18 @@
+// Copyright 2024 Mike DeAngelo
+// Based on work by Ravi Vantipalli.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+// http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 use crate::{
     metrics::Metrics, params::PerfParams, quic::Quic, tcp::print_tcp_info, tls::TlsEndpoint,
 };
@@ -390,28 +405,22 @@ impl PerfStream {
         self.temp.bytes = 0;
         self.temp.blks = 0;
     }
+
+    /// write conditionally sets a payload length header followed by the payload bytes.
+    /// This function will calculate and add the header automatically when add_header is set to true.
     #[inline]
-    pub fn write(&mut self, mut buf: &[u8], add_header: bool) -> io::Result<usize> {
-        let mut tmp_buf = vec![]; //buf.to_vec();
+    pub fn write(&mut self, buf: &[u8], add_header: bool) -> io::Result<usize> {
+        let mut tmp_buf = vec![];
         if add_header {
-            println!("write with header");
-            // let mut tmp_buf = vec![];
             tmp_buf.append((buf.len() as u16).to_be_bytes().to_vec().as_mut());
-            tmp_buf.extend_from_slice(buf);
-
-            // buf = tmp_buf.as_slice();
-        } else {
-            tmp_buf.extend_from_slice(buf);
         }
+        tmp_buf.extend_from_slice(buf);
 
-
-        println!("wrote: {:?}", tmp_buf);
         match self.stream.write(tmp_buf.as_slice()) {
             Ok(n) => {
                 return Ok(n);
             }
             Err(e) => {
-                // println!("In write {:?}", e);
                 return Err(e);
             }
         }
@@ -625,7 +634,6 @@ impl Test {
     }
     */
     pub fn set_settings(&mut self, settings: String) {
-        println!("Settings: {}", settings);
         self.settings = serde_json::from_str(&settings).unwrap();
     }
     pub fn settings(&self) -> String {
@@ -827,13 +835,14 @@ impl Test {
         let bytes = bytes as f64;
         format!("{}   {}", Test::fmt_bytes(bytes), Test::fmt_rate(bits, dur)).to_string()
     }
-    pub fn header(&self) {
+    pub fn header(&self, header_enabled: bool) {
         println!(
-            "Starting Test: protocol: {}, {} streams, {} byte blocks, {} seconds test",
+            "Starting Test: protocol: {}, {} streams, {} byte blocks, {} seconds test, payload header enabled: {}",
             self.conn(),
             self.num_streams(),
             self.settings.length,
-            self.time().as_secs()
+            self.time().as_secs(),
+            header_enabled
         );
         println!("- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -");
         match self.mode() {

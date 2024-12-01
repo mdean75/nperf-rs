@@ -1,8 +1,24 @@
+// Copyright 2024 Mike DeAngelo
+// Based on work by Ravi Vantipalli.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+// http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 use crate::params::PerfParams;
 use crate::quic::{self, Quic};
 use crate::tls::TlsEndpoint;
 use core::panic;
 use std::io;
+use std::io::Write;
 use mio::net::{TcpListener, TcpStream, UdpSocket};
 use mio::{Events, Interest, Poll, Token, Waker};
 use std::net::{IpAddr, SocketAddr};
@@ -73,7 +89,7 @@ impl ServerImpl {
 
         let stream = crate::tcp::accept(self.t.as_mut().unwrap()).await?;
         if test.verbose() {
-            println!("Time: {}", gettime());
+            println!("Time: {}", get_time());
         }
         println!("Accepted ctrl connection from {}", stream.peer_addr()?);
         set_nodelay(&stream);
@@ -98,30 +114,23 @@ impl ServerImpl {
                 test.print_stats();
                 return Ok(2);
             }
-            // println!("{:?}", events);
             for event in events.iter() {
-                // println!("Event: {:?}", event.token());
                 match event.token() {
                     CONTROL => match test.state() {
                         TestState::Start => {
-                            println!("server start: {:?}", event.token());
                             if event.is_readable() {
-                                println!("server readable");
                                 let ctrl_ref = self.ctrl.as_mut().unwrap();
                                 if self.add_header {
                                     test.cookie = drain_message_with_header(ctrl_ref)?
                                 } else {
                                     test.cookie = drain_message(ctrl_ref)?
                                 }
-                                println!("Server cookie: {}", test.cookie);
-                                // test.cookie = drain_message(ctrl_ref)?;
-                                println!("Server transition to param exchange");
+
                                 test.transition(TestState::ParamExchange);
                                 send_state(ctrl_ref, TestState::ParamExchange, self.add_header);
                             }
                         }
                         TestState::ParamExchange => {
-                            println!("server param exchange");
                             if event.is_readable() {
                                 let ctrl_ref = self.ctrl.as_mut().unwrap();
                                 let mut buf = String::new();
@@ -130,7 +139,7 @@ impl ServerImpl {
                                 } else {
                                     buf = drain_message(ctrl_ref)?;
                                 }
-                                // let buf = drain_message(ctrl_ref)?;
+
                                 test.set_settings(buf);
                                 if test.verbose() {
                                     println!("\tCookie: {}", test.cookie);
@@ -191,7 +200,6 @@ impl ServerImpl {
                         // TestStart is managed by the data connection tokens
                         TestState::TestStart => {}
                         TestState::TestRunning => {
-                            println!("server test running");
                             // this state for this token can be hit if
                             // the client is shutdown unplanned -> Err
                             // and when client sends TestEnd -> Ok
@@ -203,7 +211,6 @@ impl ServerImpl {
                                 } else {
                                     raw_state = drain_message(ctrl_ref);
                                 }
-                                // let state = match drain_message(ctrl_ref) {
                                 let state = match raw_state {
                                     Ok(buf) => match buf.len() {
                                         1 => TestState::from_i8(buf.as_bytes()[0] as i8),
@@ -239,14 +246,13 @@ impl ServerImpl {
                             let mut payload = json.as_bytes();
                             let mut tmp_buf = vec![];
                             if self.add_header {
-                                // let mut tmp_buf = vec![];
                                 tmp_buf.append((payload.len() as u16).to_be_bytes().to_vec().as_mut());
                                 tmp_buf.extend_from_slice(payload);
 
                                 payload = tmp_buf.as_slice();
                             }
-                            // self.ctrl.as_mut().unwrap().write(json.as_bytes())?;
-                            self.ctrl.as_mut().unwrap().write(payload)?;
+
+                            self.ctrl.as_mut().unwrap().write_all(payload)?;
                             test.transition(TestState::End);
                         }
                         TestState::End => {
@@ -273,7 +279,7 @@ impl ServerImpl {
                                 let ctrl_ref = self.ctrl.as_ref().unwrap();
                                 test.transition(TestState::TestStart);
                                 send_state(ctrl_ref, TestState::TestStart, self.add_header);
-                                test.header();
+                                test.header(self.add_header);
                             }
                         }
                         _ => {}
@@ -290,7 +296,7 @@ impl ServerImpl {
                                     let ctrl_ref = self.ctrl.as_ref().unwrap();
                                     test.transition(TestState::TestStart);
                                     send_state(ctrl_ref, TestState::TestStart, self.add_header);
-                                    test.header();
+                                    test.header(self.add_header);
                                 }
                             }
                         }
@@ -308,7 +314,7 @@ impl ServerImpl {
                                     let ctrl_ref = self.ctrl.as_ref().unwrap();
                                     test.transition(TestState::TestStart);
                                     send_state(ctrl_ref, TestState::TestStart, self.add_header);
-                                    test.header();
+                                    test.header(self.add_header);
                                 }
                                 break;
                             }
@@ -326,7 +332,7 @@ impl ServerImpl {
                                 let ctrl_ref = self.ctrl.as_ref().unwrap();
                                 test.transition(TestState::TestStart);
                                 send_state(ctrl_ref, TestState::TestStart, self.add_header);
-                                test.header();
+                                test.header(self.add_header);
                             }
                         }
                         _ => {}
@@ -349,9 +355,6 @@ impl ServerImpl {
                                         }
                                         Conn::TCP => {
                                             let t: &mut TcpStream = (&mut pstream.stream).into();
-
-                                            // TODO: do we need to care whether the payload has a header here? yes
-
                                             TcpStream::read(t, &mut buf)
                                         }
                                         Conn::TLS => {
@@ -380,8 +383,6 @@ impl ServerImpl {
                                                 pstream.last_recvd_in_interval =
                                                     u64::from_be_bytes(buf[0..8].try_into().unwrap());
                                             }
-                                            // pstream.last_recvd_in_interval =
-                                            //     u64::from_be_bytes(buf[0..8].try_into().unwrap());
                                         }
                                         Err(_e) => break,
                                     }
@@ -425,7 +426,6 @@ impl ServerImpl {
                                         } else {
                                             n = drain_message(t)?
                                         }
-                                        // let n = drain_message(t)?;
                                         if test.debug {
                                             println!("Cookie: {:?}", n);
                                         }
