@@ -11,6 +11,5 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Option to use 2 byte payload length header for both client and server
 - Set payload with optional header on client struct during initialization
-- 
 
 ## [0.4.0] - 2024-12-05
